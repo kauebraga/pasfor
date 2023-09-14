@@ -3,33 +3,55 @@ library(gtfstools)
 library(sf)
 library(dplyr)
 library(mapview)
-remotes::install_github("kauebraga/kauetools")
+library(furrr)
+library(purrr)
+# remotes::install_github("kauebraga/kauetools")
 
 
-gps_path <- "data-raw/arquivo_paitt_diario_2023-03-29.csv"
+# gps_path <- "data-raw/arquivo_paitt_diario_2023-03-03.csv"
 bilhetagem_path <- "data-raw/V20230329.csv"
 gtfs_path <- "data-raw/gtfs_20230519_mod.zip"
 
-integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
+
+shapes <- gtfstools::convert_shapes_to_sf(read_gtfs(gtfs_path))
+
+integrar_gps <- function(gps_path, gtfs_path) {
   
   # ABRIR DADOS -------------------------------------------------------------
   # GPS
   gps <- fread(gps_path)
   gps[, vehicleid := as.numeric(V9)]
-  gps[, hora := fasttime::fastPOSIXct(V4, tz="UTC", fixed = 4)]
+  gps[, hora := fasttime::fastPOSIXct(V4, tz="America/Fortaleza", fixed = 4)]
   gps <- setorder(gps, vehicleid, hora)
   gps[, id_gps := 1:.N, by = vehicleid]
   gps <- gps[, .(id_gps, vehicleid, hora, lon = V3, lat = V2)]
   # filter only the current day
   # gps <- gps[hora == as.POSIXct("2023-03-29")]
   
-  hist(gps$hora, breaks = "hours")
+  # hist(gps$hora, breaks = "hours")
+  
+  # gps %>%
+  #   mutate(a = data.table::hour(hora)) %>%
+  #   count(a)
+  # 
+  # 
+  # library(ggplot2)
+  # gps %>%
+  #   # mutate(a = data.table::hour(hora)) %>%
+  #   # count(a) %>%
+  #   ggplot() +
+  #   geom_histogram(aes(hora))+
+  #   scale_x_datetime(name="Hour", 
+  #                    labels = scales::date_format("%H", tz = "America/Fortaleza"),
+  #                    date_breaks = "1 hour") 
+  #   # scale_x_discrete(breaks = seq(5:10))
+  
+  
   
   
   # quick clean gps -----------------------------------------------------------------------------
   # remove points for teh same vehicle for the same time
-  gps <- gps %>%
-    filter(!(hora == lag(hora) & vehicleid == lag(vehicleid)))
+  gps <- gps[!(hora == lag(hora) & vehicleid == lag(vehicleid))]
   
   
   
@@ -48,6 +70,11 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
   #' de pontos das concentracoes, de forma a garantir que os pontos de GPS que estao na base sejam de
   #' quando o veiculo esteja realmente em movimento
   
+  
+  # remove vehiles with less than 50 observations
+  gps[, n := .N, by = vehicleid]
+  gps <- gps[n >= 50]
+  gps <- gps %>% select(-n)
   
   # 4.2) Estabelecer funcao para calcular dist entre um ponto e seu anterior
   get.dist <- function(lon, lat) geosphere::distHaversine(tail(cbind(lon,lat),-1), head(cbind(lon,lat),-1))
@@ -114,7 +141,7 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
   # get only peak time?
   gps_clean <- gps_clean %>%
     mutate(hora1 = as.ITime(hora)) %>%
-    filter(hora1 %between% c(as.ITime("04:00:00"), as.ITime("12:00:00")))
+    filter(hora1 %between% c(as.ITime("05:00:00"), as.ITime("12:00:00")))
   
   
   
@@ -123,6 +150,7 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
   gtfs <- read_gtfs(gtfs_path)
   
   shapes <- convert_shapes_to_sf(gtfs)
+  shapes <- st_make_valid(shapes)
   # identify the route from each shape
   routes <- gtfs$trips %>%
     distinct(route_id, shape_id)
@@ -134,7 +162,7 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
     # transformar para utm
     st_transform(31984) %>%
     # criar buffer de 400 metros
-    st_buffer(150) %>%
+    st_buffer(250) %>%
     st_transform(4326) %>%
     group_by(route_id) %>%
     summarise(n = n(),
@@ -160,10 +188,15 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
   
   gps_sf <- gps_clean %>% st_as_sf(coords = c("lon", "lat"), crs = 4326)
   
-  # vehicle <- unique(gps$vehicleid)[1]
+  # vehicle <- unique(gps$vehicleid)[100]
   # vehicle <-  unique(gps_clean$vehicleid)[1200]
   # vehicle <-  "40976"
   # vehicle <-  "41015"
+  # vehicle <-  "43993"
+  # vehicle <-  "32513"
+  # vehicle <-  "32675"
+  # vehicle <-  "42885"
+  # vehicle <-  "32996"
   
   # run this fuction for each pt vehicle
   get_gps_line_by_vehicle <- function(vehicle) {
@@ -193,15 +226,59 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
       st_set_geometry(NULL) %>%
       count(route_id) %>%
       mutate(perc = n / length(unique(gps_join_linha_ok$id_gps))) %>% 
+      filter(perc > 0.75)
+      # slice(which.max(perc))
+    
+    
+    
+    if (nrow(gps_probable_lines) == 0) stop("not enough points identified for a bus line")
+    # make sure there is not too much space inside the line that is occupied by points
+    
+    # crop the gps points to these lines
+    # a <- "043"
+    if (nrow(gps_probable_lines) > 1) {
+      
+      
+    identify_line <- function(a) {
+      
+      a1 <- st_join(gps_vehicle, linhas %>% filter(route_id == a)) %>%
+        filter(!is.na(route_id))
+      
+      # buffer points
+      a2 <- a1 %>% group_by(vehicleid) %>%
+        summarise(do_union = TRUE) %>%
+        st_buffer(a1, dist = 100) %>%
+        mutate(area_gps = st_area(.))
+      
+      # check intersection with line
+      a3 <- linhas %>% filter(route_id == a) %>%
+        mutate(area_route = st_area(.)) %>%
+        st_intersection(a2) %>%
+        mutate(area_intersection = st_area(.)) %>%
+        mutate(perc = area_intersection / area_route) %>%
+        st_set_geometry(NULL)
+        
+    }
+    
+    identify_line_ok <- lapply(gps_probable_lines$route_id, identify_line) %>% rbindlist() %>%
       slice(which.max(perc))
     
-    if (gps_probable_lines$perc <= 0.7) stop("not enough points identified for a bus line")
+    gps_line <- st_join(gps_vehicle, linhas %>% filter(route_id %in% identify_line_ok$route_id))
+    line_ok <- unique(identify_line_ok$route_id)
+      
+      
+    } else if (nrow(gps_probable_lines) == 1) {
+      
+      
+      gps_line <- st_join(gps_vehicle, linhas %>% filter(route_id %in% gps_probable_lines$route_id))
+      line_ok <- unique(gps_probable_lines$route_id)
+      
+    }
     
-    # crop the gps points to this line
-    gps_line <- st_join(gps_vehicle, linhas %>% filter(route_id == gps_probable_lines$route_id))
     
     # # visualizar esses pontos
     # mapview(gps_join_linha_ok) + mapview(linhas)
+    # mapview(gps_line) + linhas %>% filter(route_id == line_ok)
     # mapview(gps_join_linha_ok) + mapview(linhas %>% filter(route_id == gps_probable_lines$route_id))
     
     # delete NA's points that are either on the beggining or end of bus service
@@ -213,10 +290,32 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
       mutate(route_status = ifelse(is.na(route_id), "out_route", "in_route")) %>%
       tidyr::fill(route_id) 
     
+    
+    # identify periods where the vehicle scapes from the route, but returns after --------
+    
+    gps_line1_crop <- gps_line1 %>%
+      st_set_geometry(NULL) %>%
+      # identify each block size
+      group_by(a) %>%
+      summarise(n = n(),
+                route_status = first(route_status)) %>%
+      ungroup() %>%
+      # identify the problematics that need fixing
+      mutate(route_status_new = ifelse(route_status %in% c("out_route") & n <= 10 & lag(route_status) %in% "in_route" & lag(n) >= 20 & lead(route_status) %in% "in_route" & lead(n) >= 20, 
+                                       "in_route", route_status)) %>%
+      select(-n, -route_status)
+    
+    # bring the nex status to fix
+    gps_line1 <- gps_line1 %>%
+      left_join(gps_line1_crop, by = "a") %>%
+      select(-route_status) %>%
+      rename(route_status = route_status_new) %>%
+      mutate(a = rleid(route_status))
+    
     # identify trip beggining and end -------------------------------------------------------------
     
     # open
-    stop_routes_ok_ends <-routes_limits %>% filter(route_id == gps_probable_lines$route_id) %>%
+    stop_routes_ok_ends <-routes_limits %>% filter(route_id == line_ok) %>%
       select(stop_id)
     
     # join
@@ -224,9 +323,8 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
       st_join(stop_routes_ok_ends) %>%
       mutate(route_status = ifelse(!is.na(stop_id), "start_end", route_status))
     
-    # mapview(gps_line1, zcol = "id_gps") + stop_routes_ok_ends
-    
-    
+    # mapview(gps_line1[140:156,], zcol = "id_gps") + stop_routes_ok_ends + linhas %>% filter(route_id %in% line_ok)
+
     
     
     # crop the period where vehicles are inside of the route, but still have not started the trips --------
@@ -247,7 +345,7 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
                 route_status = first(route_status)) %>%
       ungroup() %>%
       # identify the problematics that need fixing
-      mutate(route_status_new = ifelse(route_status %in% c("in_route", "out_route") & n <= 20 & lag(route_status) %in% "start_end", "start_end", route_status)) %>%
+      mutate(route_status_new = ifelse(route_status %in% c("in_route") & n <= 20 & lag(route_status) %in% "start_end", "start_end", route_status)) %>%
       select(-n, -route_status)
     
     # bring the nex status to fix
@@ -278,7 +376,7 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
       select(-stop_id)
     
     
-    stop_routes_ok <- stops_routes %>% filter(route_id == gps_probable_lines$route_id) %>%
+    stop_routes_ok <- stops_routes %>% filter(route_id == line_ok) %>%
       group_by(shape_id) %>%
       mutate(a = group_indices()) %>%
       # filtrar somente ida
@@ -320,143 +418,101 @@ integrar_gps <- function(gps_path, bilhetagem_path, gtfs_path) {
     vamos_trips <- vamos_v1 %>%
       filter(route_status != "start_end") %>%
       mutate(trip = rleid(b)) %>%
+      # calcuate the cumulative distance in the trip
+      mutate(dist_acc = ifelse(row_number() == 1, 0, dist)) %>%
       # select columns
-      select(vehicleid, hora, route_id, direction_id, trip, lon, lat)
+      select(vehicleid, hora, route_id, direction_id, trip, dist_acc, lon, lat)
     
     
+    # define the shape id -------------------------------------------------------------------------
     
+    trips <- gtfs$trips    
+    routes_shapes <- trips %>%
+      mutate(direction_id = ifelse(grepl(pattern = "I$", x = shape_id), 0, 1)) %>%
+      distinct(route_id, shape_id, direction_id)
     
-
-    # calculate the network distance on the route for each trip -----------------------------------
-
+    vamos_trips <- vamos_trips %>%
+      left_join(routes_shapes, by = c("route_id", "direction_id"))
+    
+    print(sprintf("finishd vehicle %s", vehicle))
+    
+    return(vamos_trips)
     
     
   }
   
-  library(purrr)
   vehicles <- unique(gps_clean$vehicleid)
-  gtfs_lines_all <- lapply(vehicles[1:100], possibly(get_gps_line_by_vehicle))
+  # gtfs_lines_all <- lapply(vehicles, possibly(get_gps_line_by_vehicle))
+  
+  plan(multisession, workers = 12)
+  options(future.globals.maxSize= 1291289600)
+  gtfs_lines_all <- furrr::future_map(vehicles, possibly(get_gps_line_by_vehicle))
+  # filter onlyt those that are ok
+  gtfs_lines_all_ok <- gtfs_lines_all[!purrr::map_lgl(gtfs_lines_all, is.null)]
+  gtfs_lines_all_ok <- rbindlist(gtfs_lines_all_ok)
+  
+  
+  day <- stringr::str_extract(gps_path, "\\d{4}-\\d{2}-\\d{2}")
+  readr::write_rds(gtfs_lines_all_ok, sprintf("data/gps_clean/gps_clean_%s.rds", day))
   
   
   
-  
-  
-  
-  
-  # Quais linhas comecam ou terminam em terminais?
-  linhas_terminal <- read_csv("../data/paradas_consolidadas/paradas_consolidadas_2018-09.csv") %>%
-    group_by(linha_sentido) %>%
-    slice(1, n()) %>%
-    filter(grepl("terminal", stop_name, ignore.case = TRUE)) %>%
-    separate(linha_sentido, c("linha", "sentido")) %>%
-    mutate(terminal = case_when(
-      grepl("ANTONIO BEZERRA", stop_name, fixed = TRUE) ~ "ant_bezerra",
-      grepl("SIQUEIRA", stop_name, fixed = TRUE) ~ "siqueira",
-      grepl("PAPICU", stop_name) ~ "papicu",
-      grepl("PRAÇA TERMINAL CONJUNTO CEARÁ, SN", stop_name) ~ "cj_ceara",
-      grepl("MESSEJANA", stop_name) ~ "messejana",
-      grepl("LAGOA", stop_name) ~ "lagoa",
-      grepl("PARANGABA", stop_name) ~ "parangaba"
-    )) %>%
-    distinct(linha, terminal)
-  
-  # Abrir shape dos terminais e fazer integracao com linhas do terminal
-  terminais <- read_rds("../data/terminais.rds") %>%
-    left_join(linhas_terminal, by = "terminal") %>%
-    select(-terminal)
-  
-  # # Identificar linhas que nao tenham o temrinal como fim ou comeco
-  # linhas_nterminal <- read_csv("../data/paradas_consolidadas/paradas_consolidadas_2018-09.csv") %>%
-  #   group_by(linha_sentido) %>%
-  #   slice(1, n()) %>%
-  #   filter(!grepl("terminal", stop_name, ignore.case = TRUE)) %>%
-  #   select(linha_sentido, stop_sequence, lon, lat) %>%
-  #   to_spatial() %>%
-  #   st_transform(31984) %>%
-  #   # Criar buffer em relacao a ultima parada
-  #   st_buffer(70) %>%
-  #   st_transform(4326) %>%
-  #   # extrair somente a linha (sem o sentido) %>%
-  #   mutate(linha = str_extract(linha_sentido, "^\\d+")) %>%
-  #   ungroup() %>%
-  #   # mutate(linha_v1 = as.integer(linha_v1)) %>%
-  #   count(linha) %>% 
-  #   select(-n)
-  # 
-  # # Compor linhas: tirar a parte do terminal, se passar por terminal, e nao terminal
-  # linhas_finais <- rbind(terminais, linhas_nterminal) %>% mutate(linha = as.numeric(linha))
-  # 
-  # linhas_list <- split(linhas, linhas$linha)
-  # linhas_com_finais_list <- split(linhas_finais, linhas_finais$linha)
-  
-  # Funcao para extrair os finais de cada linha
-  extrair_finais_linhas <- function(linhas1, linhas_com_finais1) {
-    
-    # Juntar os inicios e fim
-    linhas_com_finais1 <- linhas_com_finais1 %>% mutate(id = 1) %>% count(linha, id) %>% select(-n, -id)
-    # Primeiro, tirar so a parte que nao esta no final
-    vai1 <- st_difference(linhas1, linhas_com_finais1) %>% select(-linha.1) %>% mutate(tipo = "em_linha")
-    linhas_com_finais <- linhas_com_finais1 %>%  mutate(tipo = "inicio_ou_fim")
-    # Agora, juntar isso com os finais
-    fim <- rbind(vai1, linhas_com_finais)
-  }
-  
-  linhas_fim <- map2(linhas_list, linhas_com_finais_list, extrair_finais_linhas) %>% 
-    bind_rows() %>% 
-    as_tibble() %>% 
-    st_sf(crs = 4326)
-  
-  
-  # # teste
-  mapview(filter(linhas_fim, linha == "71")) + mapview(shapes_desagregados %>% filter(linha_sentido == "71-I")
-                                                       %>% to_spatial())
-  
-  
-  # quais linhas foram registradas na base do gps
-  gps_linhas <- unique(gps_v2$linha)
-  
-  # quais linhas foram registradas na base do gtfs
-  gtfs_linhas <- unique(linhas_fim$linha)
-  
-  # garantir que todas as linhas do gps tenha correspondente na base gtfs
-  linhas_v1 <- linhas_fim %>%
-    filter(linha %in% gps_linhas)
-  
-  # aqui
-  setDT(gps_v2)
-  gps_v3 <- gps_v2[linha %in% unique(linhas_v1$linha)]
-  
-  
-  # criar uma lista com um data.frame para cada linha
-  gps_list <- gps_v3[order(linha)]
-  gps_list <- split(gps_list, by = "linha")
-  
-  setDT(linhas_v1)
-  gtfs_list <- linhas_v1[, linha := as.numeric(linha)]
-  gtfs_list <- linhas_v1[order(linha)]
-  gtfs_list <- split(gtfs_list, by = "linha")
-  
-  
-  # realizar operacao verificando quais pontos 
-  # future::plan("multiprocess")
-  # ooohh <- furrr::future_map2_dfr(gps_list, gtfs_list, st_join)
-  gps_list <- map(gps_list, st_as_sf, coords = c("lon", "lat"), crs = 4326) 
-  gtfs_list <- map(gtfs_list, st_sf, crs = 4326) 
-  ooohh <- map2_dfr(gps_list, gtfs_list, st_join)
-  
-  # salvar
-  dia <- unique(bilhetagem$dia)[1]
-  out <- sprintf("../data/gps_linhas/gps_linhas_%s.rds", dia)
-  
-  source("R/sfc_as_cols.R")
-  ooohh %>% as_tibble() %>%
-    st_sf(crs = 4326) %>%
-    sfc_as_cols() %>%
-    write_rds(out)
 }
 
 
 # APLICAR -----------------------------------------------------------------
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-01.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
 
-source("R/sfc_as_cols.R")
-dir_gps <- dir("../data/gps/2018/novo/09", full.names = TRUE, pattern = "*.csv")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-02.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-03.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-06.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-07.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-08.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-09.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-10.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-13.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-14.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-15.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-16.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-17.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-20.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-21.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-22.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-23.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-24.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-27.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-28.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-29.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-30.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-31.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")

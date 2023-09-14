@@ -39,7 +39,7 @@ stops_routes_nterminais <- stops_routes %>%
   # transformar para utm
   st_transform(31984) %>%
   # criar buffer de 400 metros
-  st_buffer(50) %>%
+  st_buffer(100) %>%
   st_transform(4326)
   
   
