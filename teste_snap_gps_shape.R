@@ -1,28 +1,43 @@
+library(data.table)
+library(gtfstools)
+library(sf)
+library(dplyr)
+library(mapview)
+library(furrr)
+library(purrr)
+library(Hmisc)
+library(lubridate)
+
+
+
 gtfs <- read_gtfs("data-raw/gtfs_20230519_mod.zip")
 gtfs$trips <- gtfs$trips %>% mutate(direction_id = ifelse(grepl(pattern = "I$", x = shape_id), 0, 1))
 
 
+shapes <- gtfstools::convert_shapes_to_sf(read_gtfs("data-raw/gtfs_20230519_mod.zip"))
+distance_stops <- readRDS("data/distance_stops.rds")
 
+# gps_path <- "data/gps_clean/gps_clean_2023-03-01.rds"
 
+snap_trips <- function(gps_path) {
 
-# convert to sf
-shapes_linhas <- gtfstools::convert_shapes_to_sf(gtfs)
-
-
-# make sure every shape on the stop files are on the shapes
-shapes_linhas <- subset(shapes_linhas, shape_id %in% stop_linhas$shape_id)
+# open gps
+gps <- readRDS(gps_path)
+gps <- gps %>% 
+  mutate(trip_id = paste0(vehicleid, "-", trip))
 
 # shape_id1 <- shapes_linhas$shape_id[20]
+# trip1 <- "57847-6"
 
-shapes_stops_dists_shape <- function(viagem) {
+snap_by_trip <- function(trip1) {
   
   # filter shape_id
-  shapes_linhas_filter <- shapes %>%
-    filter(shape_id == unique(gps_viagem$shape_id))
   stop_linhas_filter   <-   gps %>% 
     filter(trip_id == trip1) %>%
     mutate(stop_sequence = 1:n())
   
+  shapes_linhas_filter <- shapes %>%
+    filter(shape_id == unique(stop_linhas_filter$shape_id))
   # standardize shape resolution - at least every 50 meters
   shapes_linhas_filter <- st_segmentize(shapes_linhas_filter, 50)
   # shapes_linhas_filter <- sfheaders::sf_cast(shapes_linhas_filter, "POINT")
@@ -38,7 +53,7 @@ shapes_stops_dists_shape <- function(viagem) {
   shapes_linhas_filter[, shape_dist_traveled := c(0,cumsum(get.dist(shape_pt_lon,shape_pt_lat)))]
   
   
-  
+  # mapview(shapes_linhas_filter) + st_as_sf(stop_linhas_filter, coords = c("lon", "lat"), crs = 4326)
   
   
   # # Separar a primeira e ultima parada
@@ -187,22 +202,72 @@ shapes_stops_dists_shape <- function(viagem) {
   
   # save
   # readr::write_rds(stop_linhas_filter, sprintf("teste/data/snap_shape_stop/snap_shape_stop_%s.rds", shape_id1))
+  distancia_paradas_teste <- distance_stops %>% filter(shape_id == unique(stop_linhas_filter$shape_id))
   
+  
+  # Se a distancia ate a ultima parada for menor que a distancia ate a penultima, excluir ultima obs
+  if (stop_linhas_filter$dist_acc[nrow(distancia_paradas_teste)] < stop_linhas_filter$dist_acc[nrow(stop_linhas_filter) - 1]) {
+    
+    x <- stop_linhas_filter$hora[-nrow(stop_linhas_filter)]
+    y <- stop_linhas_filter$dist_acc[-nrow(stop_linhas_filter)]
+    
+  } else {
+    
+    x <- stop_linhas_filter$hora
+    y <- stop_linhas_filter$dist_acc
+    
+  }
+  
+  # Pegar a distancia sem a primeira e ultima
+  # y <- vai$dist[-c(1, nrow(vai))]
+  # Pegar as paradas sem a primeira e ultima (xout representa as distancias em que eu quero estimar
+  # a hora, que no caso sao as paradas)
+  xout <- distancia_paradas_teste$dist_acc[-c(1, nrow(distancia_paradas_teste))]
+  # xout <- distancia_paradas_teste$dist
+  
+  x_novo <- x
+  y_novo <- y
+  
+  # plot(x = y_novo, y = x_novo)
+  
+  uhlala <- as.POSIXct(approx(x = y_novo, y = x_novo, xout = xout, ties = mean, rule = 2)$y, 
+                       origin = "1970-01-01", tz = "UTC")
+  
+  
+  fim_ne <- distancia_paradas_teste %>%
+    mutate(hora = c(stop_linhas_filter$hora[1], uhlala, stop_linhas_filter$hora[nrow(stop_linhas_filter)])) %>%
+    mutate(viagem = trip1,
+           vehicleid = unique(stop_linhas_filter$vehicleid)) %>%
+    mutate(hora1 = as.ITime(hora),
+           dia = as.Date(hora)) %>%
+    select(-hora) %>%
+    select(route_id, shape_id, vehicleid, viagem, stop_id, stop_sequence, dia, hora = hora1, dist_acc)
+  
+  
+  return(fim_ne)
   
   
   
 }
 
-# run function for every shape
-trechos <- parallel::mclapply(unique(shapes_linhas$shape_id),
-                              FUN = purrr::possibly(shapes_stops_dists_shape, otherwise = NA_real_),
-                              mc.cores = 5)
-names(trechos) <- unique(shapes_linhas$shape_id)
-trechos_NA <- trechos[is.na(trechos)]
-if (length(trechos_NA >= 1)) message("It was not possible to estimate stop distances for shape id: \n", paste0(names(trechos_NA), collapse = ", "))
+# apply to every trip
+trips_all <- unique(gps$trip_id)
 
-# bind them
-trechos <- trechos[!is.na(trechos)]
-trechos <- rbindlist(trechos)
+plan(multisession, workers = 12)
+options(future.globals.maxSize= 1291289600)
+trips_stops_all <- furrr::future_map(trips_all, possibly(snap_by_trip))
+# filter onlyt those that are ok
+trips_stops_all_ok <- trips_stops_all[!purrr::map_lgl(trips_stops_all, is.null)]
+trips_stops_all_ok <- rbindlist(trips_stops_all_ok)
+# create interval
+# trips_stops_all_ok[, interval := as.ITime(lubridate::round_date(hms(hora), "15 mins"))]
+# trips_stops_all_ok %>%
+#   mutate(a = data.table::hour(hora)) %>%
+#   count(a)
 
-readr::write_rds(trechos, "data/distance_stops.rds")
+
+day <- stringr::str_extract(gps_path, "\\d{4}-\\d{2}-\\d{2}")
+readr::write_rds(trips_stops_all_ok, sprintf("data/gps_by_stop/gps_by_stop_%s.rds", day))
+
+
+}

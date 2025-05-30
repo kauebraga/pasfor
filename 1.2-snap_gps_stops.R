@@ -134,14 +134,14 @@ snap_trips <- function(gps_path) {
       select(route_id, shape_id, vehicleid, viagem, stop_id, stop_sequence, dia, hora = hora1, dist_acc)
     
     
-    return(gps_viagem_list)
+    return(fim_ne)
     
   }
   
   # apply to every trip
   trips_all <- unique(gps$trip_id)
   
-  plan(multisession, workers = 12)
+  plan(multisession, workers = 8)
   options(future.globals.maxSize= 1291289600)
   trips_stops_all <- furrr::future_map(trips_all, possibly(snap_by_trip))
   # filter onlyt those that are ok
@@ -161,18 +161,79 @@ snap_trips <- function(gps_path) {
 }
 
 
-ui1 <- walk(c("data/gps_clean/gps_clean_2023-03-01.rds"),
+walk(c("data/gps_clean/gps_clean_2023-03-01.rds"),
              snap_trips)
-ui2 <- walk(c("data/gps_clean/gps_clean_2023-03-02.rds"),
+walk(c("data/gps_clean/gps_clean_2023-03-02.rds"),
              snap_trips)
-ui3 <- walk(c("data/gps_clean/gps_clean_2023-03-03.rds"),
+walk(c("data/gps_clean/gps_clean_2023-03-03.rds"),
              snap_trips)
 walk(c("data/gps_clean/gps_clean_2023-03-06.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-07.rds"),
      snap_trips)
 walk(c("data/gps_clean/gps_clean_2023-03-08.rds"),
      snap_trips)
 walk(c("data/gps_clean/gps_clean_2023-03-09.rds"),
      snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-10.rds"),
+     snap_trips)
+
+
+walk(c("data/gps_clean/gps_clean_2023-03-13.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-14.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-15.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-16.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-17.rds"),
+     snap_trips)
+
+walk(c("data/gps_clean/gps_clean_2023-03-20.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-21.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-22.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-23.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-24.rds"),
+     snap_trips)
+
+walk(c("data/gps_clean/gps_clean_2023-03-27.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-28.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-29.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-03-30.rds"),
+     snap_trips)
+
+
+
+walk(c("data/gps_clean/gps_clean_2023-04-03.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-04.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-05.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-06.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-07.rds"),
+     snap_trips)
+
+walk(c("data/gps_clean/gps_clean_2023-04-10.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-11.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-12.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-13.rds"),
+     snap_trips)
+walk(c("data/gps_clean/gps_clean_2023-04-14.rds"),
+     snap_trips)
+     
 
 
 

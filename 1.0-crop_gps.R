@@ -2,14 +2,14 @@ library(data.table)
 library(gtfstools)
 library(sf)
 library(dplyr)
-library(mapview)
+# library(mapview)
 library(furrr)
 library(purrr)
 # remotes::install_github("kauebraga/kauetools")
 
 
-# gps_path <- "data-raw/arquivo_paitt_diario_2023-03-03.csv"
-bilhetagem_path <- "data-raw/V20230329.csv"
+# gps_path <- "data-raw/arquivo_paitt_diario_2023-03-01.csv"
+# bilhetagem_path <- "data-raw/V20230329.csv"
 gtfs_path <- "data-raw/gtfs_20230519_mod.zip"
 
 
@@ -74,23 +74,44 @@ integrar_gps <- function(gps_path, gtfs_path) {
   # remove vehiles with less than 50 observations
   gps[, n := .N, by = vehicleid]
   gps <- gps[n >= 50]
-  gps <- gps %>% select(-n)
+  gps <- gps[, !"n"]
   
-  # 4.2) Estabelecer funcao para calcular dist entre um ponto e seu anterior
-  get.dist <- function(lon, lat) geosphere::distHaversine(tail(cbind(lon,lat),-1), head(cbind(lon,lat),-1))
+  # ou pode-se usar essa funcao
+  dtHaversine <- function(lat_from, lon_from, lat_to, lon_to, r = 6378137){
+    radians <- pi/180
+    lat_to <- lat_to * radians
+    lat_from <- lat_from * radians
+    lon_to <- lon_to * radians
+    lon_from <- lon_from * radians
+    dLat <- (lat_to - lat_from)
+    dLon <- (lon_to - lon_from)
+    a <- (sin(dLat/2)^2) + (cos(lat_from) * cos(lat_to)) * (sin(dLon/2)^2)
+    return(2 * atan2(sqrt(a), sqrt(1 - a)) * r)
+  }
+  
+  # # 4.2) Estabelecer funcao para calcular dist entre um ponto e seu anterior
+  # get.dist <- function(lon, lat) geosphere::distHaversine(tail(cbind(lon,lat),-1), head(cbind(lon,lat),-1))
   
   # 4.3) Calcular essa distancia, agrupando por veiculo
-  gps_join_linha_fora1 <- gps %>%
-    group_by(vehicleid) %>%
-    mutate(dist = c(0, get.dist(as.numeric(lon), as.numeric(lat))))
+  gps_join_linha_fora1 <- copy(gps)
+  
+  
+  # gps_join_linha_fora1[, dist := c(0, get.dist(as.numeric(lon), as.numeric(lat))), by = vehicleid]
+  gps_join_linha_fora1[, `:=`(Lat_to = shift(lat, type = "lag"),
+                              Lon_to = shift(lon, type = "lag")), by = vehicleid]
+  gps_join_linha_fora1[, dist := dtHaversine(lat, lon, Lat_to, Lon_to)]
+    # group_by(vehicleid) %>%
+    # mutate(dist = c(0, get.dist(as.numeric(lon), as.numeric(lat))))
+  # remove columns
+  gps_join_linha_fora1 <- gps_join_linha_fora1[,  !c("Lat_to", "Lon_to")]
   
   #' Aqui, vamos estabelecer a distancia de 50 metros como uma distancia limite entre um ponto e seu anterior
   #' para identificar esses pontos como uma 'aglomeracao' onde o veiculo estava parado/pouco se mexendo
   #' se a distancia for maior que 50m, sera atribuido um conjunto de letras que sao diferentes
   #' se a distancia for menor que 50m, sera atribuido o numeral 1
   #' isso eh um recurso de programacao para ajudar no agrupamento desses pontos
-  gps_join_linha_fora1 <- gps_join_linha_fora1 %>% 
-    mutate(oi = ifelse(dist > 20, c("a", "b", "c"), "1"))
+  gps_join_linha_fora1[, oi := ifelse(dist > 20, c("a", "b", "c"), "1")]
+    # mutate(oi = ifelse(dist > 20, c("a", "b", "c"), "1"))
   
   # agrupar esses pontos
   #' a funcao 'rleid' cria numeros que vao percorrendo o data.frame e se mantem iguais quando a coluna 
@@ -98,7 +119,7 @@ integrar_gps <- function(gps_path, gtfs_path) {
   #' por ex, quando a coluna de referencia estiver com os valores "a b c", a funcao vai retornar "1 2 3"
   #' porem, quando a coluna de referencia estiver com os valores "1 1 1", a funcao vai retornar "4 4 4",
   #' respeitando a sequencia que foi estabelecida
-  gps_join_linha_fora1 <- gps_join_linha_fora1 %>% mutate(seq = rleid(oi))
+  gps_join_linha_fora1[, seq:= rleid(oi)]
   
   
   # Com as concentracoes ja identificadas, eh necessario identificar quando essas concentracoes
@@ -197,6 +218,7 @@ integrar_gps <- function(gps_path, gtfs_path) {
   # vehicle <-  "32675"
   # vehicle <-  "42885"
   # vehicle <-  "32996"
+  # vehicle <- "43659"
   
   # run this fuction for each pt vehicle
   get_gps_line_by_vehicle <- function(vehicle) {
@@ -434,7 +456,7 @@ integrar_gps <- function(gps_path, gtfs_path) {
     vamos_trips <- vamos_trips %>%
       left_join(routes_shapes, by = c("route_id", "direction_id"))
     
-    print(sprintf("finishd vehicle %s", vehicle))
+    # print(sprintf("finishd vehicle %s", vehicle))
     
     return(vamos_trips)
     
@@ -443,9 +465,7 @@ integrar_gps <- function(gps_path, gtfs_path) {
   
   vehicles <- unique(gps_clean$vehicleid)
   # gtfs_lines_all <- lapply(vehicles, possibly(get_gps_line_by_vehicle))
-  
-  plan(multisession, workers = 12)
-  options(future.globals.maxSize= 1291289600)
+
   gtfs_lines_all <- furrr::future_map(vehicles, possibly(get_gps_line_by_vehicle))
   # filter onlyt those that are ok
   gtfs_lines_all_ok <- gtfs_lines_all[!purrr::map_lgl(gtfs_lines_all, is.null)]
@@ -460,30 +480,27 @@ integrar_gps <- function(gps_path, gtfs_path) {
 }
 
 
+plan(multisession, workers = 8)
+options(future.globals.maxSize= 1291289600)
+
 # APLICAR -----------------------------------------------------------------
+
+
+# marco ---------------------------------------------------------------------------------------
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-01.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-02.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-03.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-06.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-07.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-08.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-09.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-10.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-13.csv",
@@ -502,17 +519,56 @@ integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-21.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-22.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-23.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-24.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-27.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-28.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-29.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-30.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-31.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+
+# abril ---------------------------------------------------------------------------------------
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-03.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-04.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-05.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-06.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-07.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-10.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-11.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-12.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-13.csv",
+             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-14.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")
