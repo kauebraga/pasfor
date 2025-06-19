@@ -17,6 +17,7 @@ gtfs_path <- "data/gtfs_202503_mod.zip"
 shapes <- gtfstools::convert_shapes_to_sf(read_gtfs(gtfs_path))
 
 
+# gps_path <- "data-raw/2025/gps_2024-12-01.csv"
 # gps_path <- "data-raw/2025/arquivo_paitt_diario_2025-05-01.csv"
 
 integrar_gps <- function(gps_path, gtfs_path) {
@@ -24,11 +25,16 @@ integrar_gps <- function(gps_path, gtfs_path) {
   # ABRIR DADOS -------------------------------------------------------------
   # GPS
   gps <- fread(gps_path)
-  gps[, vehicleid := as.numeric(V9)]
-  gps[, hora := fasttime::fastPOSIXct(V4, tz="America/Fortaleza", fixed = 4)]
+  
+  # rename columns
+  colnames(gps) <- c("direction", "latitude", "longitude", "metrictimestamp",
+                     "odometer", "routecode", "speed", "device_deviceid", "vehicle_vehicleid")
+  
+  gps[, vehicleid := as.numeric(vehicle_vehicleid)]
+  gps[, hora := fasttime::fastPOSIXct(metrictimestamp, tz="America/Fortaleza", fixed = 4)]
   gps <- setorder(gps, vehicleid, hora)
   gps[, id_gps := 1:.N, by = vehicleid]
-  gps <- gps[, .(id_gps, linha = V6, vehicleid, hora, lon = V3, lat = V2)]
+  gps <- gps[, .(id_gps, linha = routecode, vehicleid, hora, lon = longitude, lat = latitude)]
   # filter only the current day
   # gps <- gps[hora == as.POSIXct("2023-03-29")]
   
@@ -484,13 +490,15 @@ integrar_gps <- function(gps_path, gtfs_path) {
   
 }
 
-
-plan(multisession, workers = 8)
+library(furrr)
+plan(multisession, workers = 6)
 options(future.globals.maxSize= 1291289600)
 
 # APLICAR -----------------------------------------------------------------
 
 
 # dezembro/2024 ---------------------------------------------------------------------------------------
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-14.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+files_202412 <- dir("data-raw/2025", full.names = TRUE, pattern = "2024-12")
+
+walk(files_202412, integrar_gps, gtfs_path = "data/gtfs_202503_mod.zip")
+
