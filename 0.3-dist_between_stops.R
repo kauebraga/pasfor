@@ -1,9 +1,11 @@
 library(kauetools)
 library(gtfstools)
 library(dplyr)
+library(data.table)
 
-gtfs <- read_gtfs("data-raw/gtfs_20230519_mod.zip")
-gtfs$trips <- gtfs$trips %>% mutate(direction_id = ifelse(grepl(pattern = "I$", x = shape_id), 0, 1))
+# gtfs <- read_gtfs("data-raw/gtfs_20230519_mod.zip")
+gtfs <- read_gtfs("data/gtfs_202503_mod.zip")
+# gtfs$trips <- gtfs$trips %>% mutate(direction_id = ifelse(grepl(pattern = "I$", x = shape_id), 0, 1))
 
 
 

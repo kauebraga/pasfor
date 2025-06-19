@@ -10,10 +10,14 @@ library(purrr)
 
 # gps_path <- "data-raw/arquivo_paitt_diario_2023-03-01.csv"
 # bilhetagem_path <- "data-raw/V20230329.csv"
-gtfs_path <- "data-raw/gtfs_20230519_mod.zip"
+# gtfs_path <- "data-raw/gtfs_20230519_mod.zip"
+gtfs_path <- "data/gtfs_202503_mod.zip"
 
 
 shapes <- gtfstools::convert_shapes_to_sf(read_gtfs(gtfs_path))
+
+
+# gps_path <- "data-raw/2025/arquivo_paitt_diario_2025-05-01.csv"
 
 integrar_gps <- function(gps_path, gtfs_path) {
   
@@ -24,7 +28,7 @@ integrar_gps <- function(gps_path, gtfs_path) {
   gps[, hora := fasttime::fastPOSIXct(V4, tz="America/Fortaleza", fixed = 4)]
   gps <- setorder(gps, vehicleid, hora)
   gps[, id_gps := 1:.N, by = vehicleid]
-  gps <- gps[, .(id_gps, vehicleid, hora, lon = V3, lat = V2)]
+  gps <- gps[, .(id_gps, linha = V6, vehicleid, hora, lon = V3, lat = V2)]
   # filter only the current day
   # gps <- gps[hora == as.POSIXct("2023-03-29")]
   
@@ -219,6 +223,7 @@ integrar_gps <- function(gps_path, gtfs_path) {
   # vehicle <-  "42885"
   # vehicle <-  "32996"
   # vehicle <- "43659"
+  # vehicle <- vehicles[20]
   
   # run this fuction for each pt vehicle
   get_gps_line_by_vehicle <- function(vehicle) {
@@ -486,89 +491,6 @@ options(future.globals.maxSize= 1291289600)
 # APLICAR -----------------------------------------------------------------
 
 
-# marco ---------------------------------------------------------------------------------------
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-01.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-02.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-03.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-06.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-07.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-08.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-09.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-10.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-13.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-14.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-15.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-16.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-17.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-20.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-21.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-22.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-23.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-24.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-27.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-28.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-29.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-30.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-03-31.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-
-# abril ---------------------------------------------------------------------------------------
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-03.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-04.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-05.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-06.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-07.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-10.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-11.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-12.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
-integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-13.csv",
-             gtfs_path = "data-raw/gtfs_20230519_mod.zip")
+# dezembro/2024 ---------------------------------------------------------------------------------------
 integrar_gps(gps_path = "data-raw/arquivo_paitt_diario_2023-04-14.csv",
              gtfs_path = "data-raw/gtfs_20230519_mod.zip")

@@ -9,12 +9,12 @@ library(Hmisc)
 library(stringr)
 
 
-gtfs <- read_gtfs("data-raw/gtfs_20230519_mod.zip")
+gtfs <- read_gtfs("data/gtfs_202503_mod.zip")
 
 # ABRIR SHAPES ------------------------------------------------------------
 
 shapes <- gtfs$shapes %>%
-  mutate(route_id = str_extract(shape_id, "\\d{3}")) %>% 
+  mutate(route_id = str_extract(shape_id, "\\d{4}")) %>% 
   mutate(direction_id = str_sub(shape_id, -1, -1)) %>%
   mutate(direction_id = ifelse(direction_id == "I", 0 ,1))
 
